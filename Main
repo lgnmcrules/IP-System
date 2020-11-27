@@ -1,0 +1,2109 @@
+/* 
+
+Last updated 11/26/2020
+
+Created by lgnmcrules on 3/25/2019
+
+IP System for OVA or similar games.  Allows multi-turn combat balanced by homebrewed mechanics
+
+To Do List:
+
+-Implement Giving mind control for 'x' amount of time
+-Implement Table-like-thing at the top of the game screen for selecting players and things to see their properties
+--Have some sort of selection animation on chosen players
+-General UI improvements over Console output
+
+Finished:
+-Ability to give preset hitstun (10), mind control (100), and DoTs (30, 70, 100)
+-Implement selecting Act Speed off of typed in input
+--Figure out how to type in inputs
+-Implement Mind Control thing
+--Works off of timer that only runs while in wait
+---Figure out unit of time in the system
+-Save/Load
+-Editor for adding in players and editing them
+--Lots of buttons
+-Random Timers (DoTs, etc)
+-Remove and add players during the game running
+
+Notes:
+-The ReturnPositions are 60, 150, 240, 330, and 420
+
+*/
+var loadArray = [["tiffany", 1, 5, -65536, 15, true], ["tiffany2", 1, 4, -1199438, 55, true], ["tiffany3", 1, 3, -16737793, 4, true], ["tiffany4", 2, 4, -65311, 2.5, true], ["tiffany5", 2, 5, -3866880, 0.5, true], ["tiffany6", 2, 5, -3866880, 0.5, true], ["tiffany7", 2, 5, -3866880, 0.5, true], ["tiffany8", 2, 5, -3866880, 0.5, true], ["Tiffany0", 1, 5, -8037798, 2, true], ["Tiffany1", 1, 5, -8037798, 2, true], ["Tiffany2", 1, 5, -8037798, 2, true], ["Tiffany3", 1, 5, -8037798, 2, true], ["Tiffany4", 1, 5, -8037798, 2, true], ["New Player", 1, 5, -65536, 75,true]];
+
+println(color(245, 240, 245));
+frameRate(40);
+//var dataToShow = "none selected";
+
+/** PRE-DEFINED CONSTANTS **/
+var groundLevel = width/2;
+var lineSpace = width/10;
+var lineLengthWait = 100;
+var lineLengthAct = lineLengthWait/4;
+var lineDistanceApart = height/10;
+var lineUnitWait = (width*0.7 - lineSpace)/lineLengthWait;
+var lineUnitAct =((width-lineSpace) - width*0.7)/lineLengthAct;
+var paused = true;
+var editorRectSize = new PVector(120,40,2);
+var editorBoxNumber = floor(height / (editorRectSize.y + 5)-3);
+var returnPosCount = 4;
+var returnPosSpacing = lineLengthWait*lineUnitWait / returnPosCount;
+
+/** PRE-DEFINED VARIABLES **/
+var playersList = [];
+var playersPlaying = [];
+var editButtons = [];
+var clickableGameButtons = [];
+var clickableEditButtons = [];
+var waitingToAct = [];
+var selectedFormation = 3;//Formations.neutral
+var pageNumber = 0;
+var framesCounter = 0;
+
+/** ENUMS (GAME DICTIONARIES) **/
+var Stage = {
+    wait : 1,
+    act : 2,
+    endWait : 3,
+    endAct : 4,
+    hitstun : 5
+};
+var Formations = { //For the Spawn Players initiatives
+    ambushed : 1,
+    initiative : 2,
+    neutral : 3
+};
+var Type = {
+    player : 1,
+    enemy : 2,
+    boss : 3,
+    minion : 4,
+    none : 5
+};
+var Screen = {
+    game : 1,
+    editor : 2,
+    load : 3,
+    main : 4
+};
+var PlayerInfo = {
+    name : 1,
+    waitSpeed : 2,
+    id : 3,
+    type : 4
+};
+var Colors = {
+    bg : color(111, 142, 150), //red
+    mnubtn : color(42, 240, 24),
+    mnubtnsel : color(20, 107, 56),
+    waitLine : color(255, 255, 255),
+    actLine : color(255, 0, 0),
+    players : color(14, 30, 201),
+    enemies : color(148, 0, 0),
+    arrow : color(255, 183, 0),
+    editText : color(0, 0, 0),
+    returnPos : [color(0, 255, 208),color(214, 92, 214),color(4, 140, 41),color(173, 168, 173),color(188, 196, 82)],
+    gameNames : color(158, 74, 74),
+    boxEdit : color(30, 14, 201),
+    listSel : color(184, 177, 177),
+    list : color(242, 234, 234),
+    igeList : color(116, 122, 11),
+    igePlay : color(255, 0, 0)
+};
+var currentScreen = Screen.main;
+
+/** LOCK PLAYERINFO AND SCREEN VARIABLES **/
+Object.freeze(PlayerInfo);
+Object.freeze(Screen);
+Object.freeze(Colors);
+
+/** LOOK UP BY VALUE NOT REFERENCE **/
+var makeValue = function(value){
+    var a = value.toString();
+    a = parseFloat(a);
+    return a;
+};
+var makePVectorValue = function(vector){
+    var x = makeValue(vector.x);
+    var y = makeValue(vector.y);
+    var z = makeValue(vector.z);
+    return new PVector(x,y,z);
+};
+
+/** TRIANGLE CHECKER **/
+var area = function(x1,y1,x2,y2,x3,y3,x,y){//area of triangle
+    return abs((x1*(y2-y3) + x2*(y3-y1)+ x3*(y1-y2))/2.0);
+};
+var trianglePoint = function(x1,y1,x2,y2,x3,y3,x,y){//check if x and y are inside of triangle points using sweet math
+    /* Calculate area of triangle ABC */
+    var A = area (x1, y1, x2, y2, x3, y3); 
+  
+   /* Calculate area of triangle PBC */   
+    var A1 = area (x, y, x2, y2, x3, y3); 
+  
+   /* Calculate area of triangle PAC */   
+    var A2 = area (x1, y1, x, y, x3, y3); 
+  
+   /* Calculate area of triangle PAB */    
+    var A3 = area (x1, y1, x2, y2, x, y); 
+    
+   /* Check if sum of A1, A2 and A3 is same as A */ 
+    return (A === A1 + A2 + A3); 
+    
+};
+
+/** DRAW COLOR PICKER **/
+var colorPicker = function(x, y){
+    this.s = 0;
+    this.dragging = false;
+    this.pos = new PVector(x, y);
+    this.val = 0;
+    this.reduce = 2.5;
+    this.sliderPos = map(this.s, 0, 255, 0, 255/this.reduce);
+    
+    colorPicker.prototype.display = function(){
+        this.sliderPos = map(this.s, 0, 255, 0, 255/this.reduce);
+        
+        /* BOX OF COLORS */
+        if(mouseX >= this.pos.x && mouseX <= this.pos.x + 255/this.reduce && mouseY >= this.pos.y && mouseY <= this.pos.y + 255/this.reduce){
+            cursor(CROSS);
+        }
+        strokeWeight(5);
+        for(var y = this.pos.y; y < this.pos.y + 255/this.reduce; y += 4){
+            for(var x = this.pos.x; x < this.pos.x + 255/this.reduce; x += 4){
+                stroke((x - this.pos.x) * this.reduce, (y - this.pos.y) * this.reduce, this.s);
+                point(x, y);
+            }
+        }
+        
+        /* SLIDER */
+        stroke(0, 0, 0);
+        strokeWeight(2);
+        line(
+            this.pos.x + 255/this.reduce + 10, 
+            this.pos.y, 
+            this.pos.x + 255/this.reduce + 10, 
+            this.pos.y + 255/this.reduce
+        );
+        stroke(168, 168, 168);
+        strokeWeight(10);
+        point(this.pos.x + 255/this.reduce + 10, this.pos.y + this.sliderPos);
+        if(mouseX >= this.pos.x + 255/this.reduce + 5 && mouseX <= this.pos.x + 255/this.reduce + 15 && mouseY >= this.pos.y + this.sliderPos - 5 && mouseY <= this.pos.y + this.sliderPos + 5){
+            cursor(HAND);   
+        }
+        if (this.dragging === true){
+            this.s = map(mouseY, this.pos.y, this.pos.y + 255/this.reduce, 0, 255);
+        }
+    };
+    
+    //Mouse Clicked
+    colorPicker.prototype.select = function(){
+        this.dragging = false;
+        //select Color
+        if(mouseX >= this.pos.x && mouseX <= this.pos.x + 255/this.reduce && mouseY >= this.pos.y && mouseY <= this.pos.y + 255/this.reduce){
+            this.val = color(
+                (mouseX - this.pos.x) * this.reduce, 
+                (mouseY - this.pos.y) * this.reduce, 
+                this.s);
+        }
+        //Change hue
+        else if(mouseX >= this.pos.x + 255/this.reduce + 5 && mouseX <= this.pos.x + 255/this.reduce + 15 && mouseY >= this.pos.y + this.sliderPos - 5 && mouseY <= this.pos.y + this.sliderPos + 5){
+            this.dragging = true;
+        } 
+    };
+    //Value Returned
+    colorPicker.prototype.value = function(){
+        return color(this.val);
+    };  
+};
+var pickColor = new colorPicker(0,0);
+
+/** RESETS ARRAY **/
+var resetArray = function(array) {
+    array.splice(0,array.length);
+};
+
+/** DRAW LINES **/
+var land = function(){
+    strokeWeight(3);
+    stroke(Colors.waitLine);
+    line(lineSpace, groundLevel, width * 0.70, groundLevel);
+    stroke(Colors.actLine);
+    line(width * 0.7, groundLevel + lineDistanceApart, width-lineSpace, groundLevel + lineDistanceApart);
+    noStroke();
+    for (var i = 0; i <= returnPosCount; i++){
+        fill(Colors.returnPos[i]);
+        rect(i * returnPosSpacing + lineSpace,groundLevel-6,2,12,-3);
+    }
+};
+
+/** DRAW BG **/
+var drawBG = function() {
+    background(Colors.bg);
+    cursor(ARROW);
+};
+
+/** PLAYER OBJECT DEFINITION **/
+var makePlayer = function(name, type, subtype, color, waitSpeed,isDisplayed){
+    this.name = name;
+    this.type = type;
+    this.color = color;
+    this.waitSpeed = waitSpeed;
+    this.isDisplayed = isDisplayed;
+    this.pos = new PVector(lineSpace,groundLevel);
+    this.subtype = subtype;
+    playersList.push(this);
+    
+};
+
+var savePlayers = function(){
+    print("\n[");
+    for (var i = 0; i < playersList.length - 1;i++){
+        print("[");
+        print('"' + playersList[i].name + '", ');
+        print(playersList[i].type + ", ");
+        print(playersList[i].subtype + ", ");
+        print(playersList[i].color + ", ");
+        print(playersList[i].waitSpeed + ", ");
+        print(playersList[i].isDisplayed + "], ");
+    }
+    print("[");
+    print('"' + playersList[playersList.length-1].name + '", ');
+    print(playersList[playersList.length-1].type + ", ");
+    print(playersList[playersList.length-1].subtype + ", ");
+    print(playersList[playersList.length-1].color + ", ");
+    print(playersList[playersList.length-1].waitSpeed + ",");
+    print(playersList[playersList.length-1].isDisplayed + "]]");
+    
+    
+    println("\nSuccess!  Paste this into the loadArray brackets ([]) at the top to load!");
+};
+
+var loadPlayers = function(){
+    resetArray(playersList);
+    println(playersList);
+    for (var i = 0; i < loadArray.length;i++){
+        new makePlayer(loadArray[i][0], loadArray[i][1], loadArray[i][2], loadArray[i][3], loadArray[i][4],loadArray[i][5]);
+    }
+};
+
+/** SPAWN PLAYERS AT START **/
+var waitSpeedCalculate = function(waitSpeed){
+    var returnVal = 0;
+    
+    if ((lineLengthWait / map(waitSpeed,lineLengthWait,1,1,lineLengthWait)) > 0)
+    {
+        returnVal = makeValue(lineLengthWait / map(waitSpeed,lineLengthWait,1,1,lineLengthWait) * lineUnitWait);
+    }
+    else {
+        returnVal = makeValue(lineLengthWait * lineUnitWait);
+    }
+    
+    return returnVal;
+};
+var actSpeedCalculate = function(actSpeed){
+    var returnVal;
+    if (actSpeed >= 25.0){
+        actSpeed = 25.0;
+    }
+    if ((lineLengthAct / map(parseFloat(actSpeed),lineLengthAct,1,1,100)) > 0){
+        returnVal = lineLengthAct / map(actSpeed,lineLengthAct,1,0,100) * lineUnitAct;
+    }
+    else {
+        returnVal = lineLengthAct * lineUnitAct;
+    }
+    return returnVal;
+};
+
+var spawnPlayers = function(playerUnit){
+    //should spawn one at a time
+    this.name = playerUnit.name;
+    this.pos = makePVectorValue(playerUnit.pos);
+    this.type = makeValue(playerUnit.type);
+    this.color = playerUnit.color;
+    this.isDisplayed = playerUnit.isDisplayed;
+    this.baseWaitSpeed = playerUnit.waitSpeed;
+    this.waitSpeed = waitSpeedCalculate(playerUnit.waitSpeed);
+    this.baseActSpeed = 0;
+    this.cloneNumber = 0;
+    /*
+    if ((lineLengthWait / map(playerUnit.waitSpeed,lineLengthWait,1,1,lineLengthWait)) > 0)
+    {
+            this.waitSpeed = makeValue(lineLengthWait / map(playerUnit.waitSpeed,lineLengthWait,1,1,lineLengthWait) * lineUnitWait);
+            println(this.waitSpeed);
+    }
+    else {
+        this.waitSpeed = makeValue(lineLengthWait * lineUnitWait);
+        println(this.name + " " + this.waitSpeed);
+    }*/
+    
+    this.stage = Stage.wait;
+    this.subtype = makeValue(playerUnit.subtype);
+    this.actSpeed = 0; //Changes later
+    this.turnCounter = 0;
+    this.returnPos = lineSpace;
+    this.hitStunCounter = 0;//Actual hitstun
+    this.knockback = 0;
+    
+    this.mindControlCounter = 0;
+    this.randomTimer = [];//Counter, name, times to repeat, time betweeen DoTs
+    this.periodicHitStun = [0,0,0,0,0]; //Length of time periodic hitstun will last on this character, amount of hitstun per interval, knockback per interval, time between intervals, current time
+    this.waitSpeedModifier = [0,0]; //Amount increase by, length of time increased by WAIT
+    this.actSpeedModifier = [0,0]; //Amount increase by, length of time increased by ACT
+    //RETURN TO EDIT
+    /*
+    [object,
+    [spawnIn, spawnNumber],
+    death,
+    knockback,
+    [periodicHitStun, amount, knockback, interval],
+    mindControlTimer,
+    [waitLineSpeedIncrease, timer], 
+    [actLineSpeedIncrease, timer],
+    [randomTimer, "name"]]
+    ]
+    
+    */
+    
+};
+
+/** 3 FORMATIONS: AMBUSHED, INITIATIVE, NEUTRAL **/
+var initializePlayerPos = function() {
+    var totalDisplayed = 0;
+    for (var i = 0; i < playersList.length; i++){
+                if (playersList[i].isDisplayed === true){
+                    totalDisplayed ++;
+                }
+    }
+    
+    //figure out positions before actually spawning them
+    switch(selectedFormation){
+        case Formations.ambushed: //enemies are advantaged
+            var counter = 0;
+            for (var i = 0; i < playersList.length; i++){
+                if (playersList[i].isDisplayed === true && playersList[i].type === Type.enemy){
+                    //put enemies further towards the end
+                    counter++;
+                    playersList[i].pos.x = ((width*0.7 - lineSpace)/ lineUnitWait - ((lineLengthWait-lineSpace/lineUnitWait)/totalDisplayed * (counter-1))) * lineUnitWait; 
+                }
+            }
+            counter++;
+            for (var i = 0; i < playersList.length; i++){
+                if (playersList[i].isDisplayed === true && playersList[i].type === Type.player){
+                    //put players behind the enemies
+                    counter++;//do this by not resetting the counter
+                    playersList[i].pos.x = ((width*0.7 - lineSpace)/ lineUnitWait - ((lineLengthWait-lineSpace/lineUnitWait)/totalDisplayed * (counter-1))) * lineUnitWait;
+                }
+            }
+            break;
+        case Formations.initiative: // players are advantaged
+            var counter = 0;
+            for (var i = 0; i < playersList.length; i++){
+                    if (playersList[i].isDisplayed === true && playersList[i].type === Type.player){
+                        //put enemies further towards the end
+                        counter++;
+                        playersList[i].pos.x = ((width*0.7 - lineSpace)/ lineUnitWait - ((lineLengthWait-lineSpace/lineUnitWait)/totalDisplayed * (counter-1))) * lineUnitWait;
+                        
+                    }
+                } 
+            counter++;
+            for (var i = 0; i < playersList.length; i++){
+                    if (playersList[i].isDisplayed === true && playersList[i].type === Type.enemy){
+                        //put players behind the enemies
+                        counter++;//do this by not resetting the counter
+                        playersList[i].pos.x = ((width*0.7 - lineSpace)/ lineUnitWait - ((lineLengthWait-lineSpace/lineUnitWait)/totalDisplayed * (counter-1))) * lineUnitWait;
+                    }
+                }
+            break;
+        case Formations.neutral:
+            var counter = 0;
+            for (var i = 0; i < playersList.length; i++){
+                if (playersList[i].isDisplayed === true){
+                    counter ++;
+                    playersList[i].pos.x = ((width*0.7 - lineSpace)/ lineUnitWait - ((lineLengthWait-lineSpace/lineUnitWait)/totalDisplayed * (counter-1))) * lineUnitWait; 
+                }
+            }
+            break;
+        default:
+            println("error, no valid formation to spawn players");
+            break;
+    }
+    
+    for (var i = 0; i < playersList.length;i++){
+        if (playersList[i].isDisplayed === true){
+            playersPlaying.push(new spawnPlayers(playersList[i]));
+            //Separates those playing from those just in the system
+        }
+    }
+};
+var toggleFormation = function(){
+    switch (selectedFormation){
+        case Formations.initiative:
+            selectedFormation = Formations.ambushed;
+            break;
+        case Formations.ambushed:
+            selectedFormation = Formations.neutral;
+            break;
+        case Formations.neutral:
+            selectedFormation = Formations.initiative;
+            break;
+        default:
+            selectedFormation = Formations.initiative;
+            println("Error: Invalid Formation");
+            break;
+    }
+};
+
+/** TYPER **/
+var type = function(arr){//need to make this into summonable object, not a persistent object
+    this.key = "";
+    this.array = arr;
+    this.index = 0;
+    this.keyCode = 0;
+    this.toType = "";
+    this.string = "";
+    this.output = "null";
+    type.prototype.getInput = function(keyy,keyCodee){
+        this.key = keyy;
+        this.keyCode = keyCodee;
+        switch (this.keyCode){
+            case 16://undesireable character enters
+            case 20:
+            case 18:
+            case 17:
+            case 157:
+            case 37:
+            case 38:
+            case 39:
+            case 40:
+            case 112:
+            case 113:
+            case 114:
+            case 115:
+            case 116:
+            case 117:
+            case 118:
+            case 119:
+            case 120:
+            case 121:
+            case 122:
+            case 123:
+            case 127:
+                this.toType = "";
+                break;
+            case 8: //backspace
+                this.toType = "backspace";
+                break;
+            case 10: //enter or \n
+                this.toType = "enter";
+                break;
+            default:
+                this.toType = this.key;
+                break;
+                
+        }
+    };
+    /**DISPLAY DATA SOMEWHERE**/
+    type.prototype.display = function(x, y, option){
+        if (this.toType === "backspace"){
+            if (this.string.length > 0){
+                this.string = this.string.slice(0,this.string.length-1);
+            }
+        }
+        else if (this.toType === "enter"){
+            switch(option){
+                case "name":
+                    this.array[this.index].name = this.string;
+                    break;
+                case "actSpeed":
+                    if (!isNaN(parseFloat(this.string))){
+                        
+                        //Map inputted Values of Act Speed to relative values
+                        waitingToAct[0].baseActSpeed = parseFloat(this.string);
+                        waitingToAct[0].actSpeed = actSpeedCalculate(waitingToAct[0].baseActSpeed);
+                        
+                        this.toType = "null";
+                        return 2;
+                    }
+                    break; 
+                case "color":
+                    if (!isNaN(parseFloat(this.string))){
+                        this.array[this.index].color = parseFloat(this.string);
+                        this.toType = "null";
+                        return 2;
+                    }
+                    break;
+                case "waitSpeed":
+                    if (!isNaN(parseFloat(this.string))){
+                        if (parseFloat(this.string) > lineLengthWait){
+                            this.string = lineLengthWait.toString();
+                        }
+                        this.array[this.index].waitSpeed = parseFloat(this.string);
+                        this.toType = "null";
+                        return 2;
+                    }
+                    break;
+                default:
+                    println("undefined option parameter in typer object");
+            }
+            
+        }
+        else if (this.toType !== "null"){ //type something
+            this.string = this.string + this.toType.toString();
+            
+        }
+        fill(43, 37, 37);
+        text( this.string,x,y);
+        this.toType = "null"; 
+        return null;
+   };
+};
+var typer = new type(playersList);//holds memory of typing objects n shit
+
+/** EDITOR **/
+var makeEditButtons = function(arr, index, special, recursion,x,y){
+    this.arr = arr;
+    this.index = index;
+    this.special = special;
+    this.pos = new PVector(0,0);
+    this.size = new PVector(100,30);
+    this.text = [];
+    this.selected = false;
+    this.recursion = recursion;
+    var fillColor = color(255, 0, 0);
+    switch(this.special){
+        case "type":
+            this.pos = new PVector(x + this.size.x,y + this.recursion * (this.size.y + 4));
+            switch(this.recursion){
+                case 0:
+                    this.text.push("Player");
+                    this.text.push(Type.player);
+                    break;
+                case 1:
+                    this.text.push("Enemy");
+                    this.text.push(Type.enemy);
+                    break;
+            }
+            break;
+            
+        case "subtype":
+            switch(this.recursion){
+                case 0:
+                    this.text.push("None");
+                    this.text.push(Type.none);
+                    break;
+                case 1:
+                    this.text.push("Minion");
+                    this.text.push(Type.minion);
+                    break;
+                case 2:
+                    this.text.push("Boss");
+                    this.text.push(Type.boss);
+            }
+            this.pos = new PVector(x + this.size.x,y + this.recursion * this.size.y + 10);
+            break;
+            
+        case "spawn":
+            switch(this.recursion){
+                case 0:
+                    this.text.push("True");
+                    this.text.push(true);
+                    break;
+                case 1:
+                    this.text.push("False");
+                    this.text.push(false);
+                    break;
+            }
+            this.pos = new PVector(x + this.size.x,y + this.recursion * this.size.y + 10);
+            break;
+            
+        case "initiative":
+            this.pos = new PVector(x,y);
+            this.text.push("Ambushed");
+            this.text.push("Initiative");
+            this.text.push("Neutral");
+            break;
+        default:
+            println("invalid button type");
+            break;
+    }
+    
+    
+    makeEditButtons.prototype.display = function(){
+        stroke(Colors.boxEdit);
+        if (mouseX > this.pos.x && mouseX < this.pos.x + this.size.x && mouseY > this.pos.y && mouseY < this.pos.y + this.size.y){
+            fillColor = color(217, 193, 193);
+        }
+        else{
+            fillColor = Colors.mnuBtn;
+        }
+        strokeWeight(3);
+        fill(fillColor);
+        rect(this.pos.x,this.pos.y,this.size.x,this.size.y);
+        fill(0, 0, 0);
+        if (this.special !== "initiative"){
+            text(this.text[0],this.pos.x + 3,this.pos.y);
+        }
+        else {
+            textAlign(LEFT,TOP);
+            text(this.text[selectedFormation - 1],this.pos.x+3,this.pos.y);
+        }
+    };
+    makeEditButtons.prototype.clicked = function(){
+        if (mouseX > this.pos.x && mouseX < this.pos.x + this.size.x && mouseY > this.pos.y && mouseY < this.pos.y + this.size.y){
+            //If clicking this button
+            switch(this.special){
+                case "type":
+                    this.arr[this.index].type = this.text[1];
+                    break;
+                case "subtype":
+                    this.arr[this.index].subtype = this.text[1];
+                    break;
+                case "spawn":
+                    this.arr[this.index].isDisplayed = this.text[1];
+                    break;
+                case "initiative":
+            
+                    toggleFormation();
+                    break;
+                default:
+                    println("invalid button");
+                    break;
+            }
+            
+        }
+    };
+};
+
+var scroller = function(arr){
+    this.arr = arr; //this is the array to scroll through
+    this.page = 1; //current page
+    this.totalPages = 1; //total pages
+    this.numberDisplayed = floor((height-50)/40);
+    this.selectedIndex = 0;
+    
+    
+    //some position variables
+    this.size = new PVector(200, height);
+    this.backBtn = new PVector(20, height - 35); 
+    this.forwBtn = new PVector(150, height - 35);
+    this.disp = new PVector(100, height - 20); 
+    this.specialButtonsPos = new PVector(1,101,40*this.numberDisplayed+1);
+    this.enterNamePos = new PVector (width/2,50);
+    this.type = 0;
+    this.currentlyEditing = "";
+    this.buttonAmount = [];
+    
+    //Displayed Info GUI variables
+    this.playerTypeDisplay = new PVector(width/2-70,height/2-170,[180,30]);
+    
+    
+    scroller.prototype.displayInfo = function(){//edit player information
+        var subType;
+        switch(this.arr[this.selectedIndex].type){
+            case 1:
+                this.type = "Player";
+                break;
+            case 2:
+                this.type = "Enemy";
+                break;
+            case 3:
+                this.type = "Boss";
+                break;
+            case 4:
+                this.type = "Minion";
+                break;
+            case 5:
+                this.type = "none";
+                break;
+            default:
+                this.type = "null";
+                println("error in this.arr[this.selectedIndex].type");
+                break;
+        }
+        switch(this.arr[this.selectedIndex].subtype){
+            case 1:
+                subType = "Player";
+                break;
+            case 2:
+                subType = "Enemy";
+                break;
+            case 3:
+                subType = "Boss";
+                break;
+            case 4:
+                subType = "Minion";
+                break;
+            case 5:
+                subType = "none";
+                break;
+            default:
+                subType = "null";
+                println("error in this.arr[this.selectedIndex].type  EDITOR FUNCTION");
+                break;
+        }
+        var txt;
+        if (this.arr[this.selectedIndex].type === Type.player){
+            stroke(Colors.players);
+        }
+        else{
+            stroke(Colors.enemies);
+        }
+        var info;
+        for (var i = 0; i < 5;i++){
+            if(i === 2){//Color box
+                fill(this.arr[this.selectedIndex].color);
+            }
+            else{//not color box
+                fill(Colors.arrow);
+            }
+            rect(this.playerTypeDisplay.x,this.playerTypeDisplay.y+i*70,this.playerTypeDisplay.z[0],this.playerTypeDisplay.z[1],2);
+            switch(i){
+                case 0:
+                    txt = "Type";
+                    info = this.type;
+                    break;
+                case 1:
+                    txt = "Subtype";
+                    info = subType;
+                    break;
+                case 2:
+                    txt = "Color";
+                    info = this.arr[this.selectedIndex].color;
+                    break;
+                case 3:
+                    txt = "Wait Speed";
+                    info = this.arr[this.selectedIndex].waitSpeed;
+                    break;
+                case 4:
+                    txt = "Spawn Start";
+                    info = this.arr[this.selectedIndex].isDisplayed;
+                    break;
+            }
+            fill(0, 0, 0);
+            textSize(20);
+            textAlign(LEFT,TOP);
+            text(txt + ": " + info,this.playerTypeDisplay.x+4,this.playerTypeDisplay.y+4 + i*70);
+            
+        }
+        
+        //Draw a white box on top of the name and then put the typer there until the typer hits "enter" and then get rid of this mofo. 
+        //Enable when the person clicks on the space where the name is.
+        switch (this.currentlyEditing){
+            case "name":
+                typer.index = (this.selectedIndex);
+                typer.display(this.enterNamePos.x+5,this.enterNamePos.y,"name");
+                break;
+            case "type":
+                if (this.buttonAmount.length > 0){//reset the array if it's full of the wrong type of buttons
+                    if (this.buttonAmount[0].special !== "type"){
+                        resetArray(this.buttonAmount);
+                    }
+                }
+                //Create "type" buttons with recursion counts
+                if (this.buttonAmount.length < 2){
+                    for (var i = 0; i < 2; i++){
+                        this.buttonAmount.push(new makeEditButtons(this.arr,this.selectedIndex,"type",i,this.playerTypeDisplay.x + this.size.x/2,this.playerTypeDisplay.y));
+                    }
+                }
+                else{
+                    for (var i = 0; i < this.buttonAmount.length; i ++){
+                        this.buttonAmount[i].display();
+                    }
+                }
+                
+                
+                break;
+            case "subtype":
+                if (this.buttonAmount.length > 0){//reset the array if it's full of the wrong type of buttons
+                    if (this.buttonAmount[0].special !== "subtype"){
+                        resetArray(this.buttonAmount);
+                    }
+                }
+                //Create "type" buttons with recursion counts
+                if (this.buttonAmount.length < 3){
+                    for (var i = 0; i < 3; i++){
+                        this.buttonAmount.push(new makeEditButtons(this.arr,this.selectedIndex,"subtype",i,this.playerTypeDisplay.x + this.size.x/2,this.playerTypeDisplay.y));
+                    }
+                }
+                else{
+                    for (var i = 0; i < this.buttonAmount.length; i ++){
+                        this.buttonAmount[i].display();
+                    }
+                }
+                break;
+            case "color":
+                typer.index = (this.selectedIndex);
+                textAlign(LEFT,CENTER);
+                fill(255, 255, 255);
+                noStroke();
+                pickColor.pos.x = this.playerTypeDisplay.x+200;
+                pickColor.pos.y = 200;
+                pickColor.display();
+                
+                //do this now
+                strokeWeight(3);
+                
+                break;
+            case "waitSpeed":
+                typer.index = (this.selectedIndex);
+                fill(Colors.arrow);
+                noStroke();
+                rect(this.playerTypeDisplay.x+118,this.playerTypeDisplay.y+4 + 3*70 , 60, 20);
+                typer.display(this.playerTypeDisplay.x+118,this.playerTypeDisplay.y+4 + 3*70 ,"waitSpeed");
+
+                
+                break;
+            case "isDisplayed":
+                if (this.buttonAmount.length > 0){//reset the array if it's full of the wrong type of buttons
+                    if (this.buttonAmount[0].special !== "spawn"){
+                        resetArray(this.buttonAmount);
+                    }
+                }
+                //Create "type" buttons with recursion counts
+                if (this.buttonAmount.length < 2){
+                    for (var i = 0; i < 2; i++){
+                        this.buttonAmount.push(new makeEditButtons(this.arr,this.selectedIndex,"spawn",i,this.playerTypeDisplay.x + this.size.x/2,this.playerTypeDisplay.y *3));
+                    }
+                }
+                else{
+                    for (var i = 0; i < this.buttonAmount.length; i ++){
+                        this.buttonAmount[i].display();
+                    }
+                }
+                
+                break;
+        }//unnecessary for a default
+        
+    };
+    
+    /** DISPLAY OUR SCROLLER **/
+    scroller.prototype.display = function(){
+        /**Editing Buttons**/
+        
+        stroke(255, 0, 0);
+        fill(240, 235, 240);
+        rect(this.enterNamePos.x,this.enterNamePos.y,150,30);
+        fill(0, 0, 0);
+        textMode(LEFT);
+        textAlign(CENTER,CENTER);
+        if (this.currentlyEditing !== "name"){//draw name
+            text(this.arr[this.selectedIndex].name,this.enterNamePos.x+this.enterNamePos.x/4,this.enterNamePos.y+this.enterNamePos.y/4);
+        }
+        
+        
+        
+        /** display background **/
+        this.totalPages = ceil(arr.length / this.numberDisplayed);
+        noStroke();
+        fill(102, 119, 140);
+        rect(0, 0, this.size.x, this.size.y);
+        
+        /** display page info **/
+        fill(173, 24, 10);
+        textAlign(CENTER, CENTER);
+        textSize(18);
+        text(this.page+" of "+this.totalPages, this.disp.x, this.disp.y);
+        
+        /** display buttons **/
+        rectMode(CORNER);
+        //imaginary boxes to see the clickable area
+        noFill();
+        noStroke();
+        rect(this.backBtn.x, this.backBtn.y, 30, 30); //back
+        rect(this.forwBtn.x, this.forwBtn.y, 30, 30); //next
+        //triangles for btns based on ^ dimensions
+        fill(186,18,0);
+        /** CHECK FOR MOUSE OVER BTN **/
+        if(mouseX > this.backBtn.x && mouseX < this.backBtn.x + 30 && mouseY > this.backBtn.y && mouseY < this.backBtn.y + 30){
+            //mouse is in back btn area
+            cursor(HAND);
+            fill(255, 252, 252);
+        }
+         
+        triangle(this.backBtn.x + 30, this.backBtn.y, this.backBtn.x + 30, this.backBtn.y + 30, this.backBtn.x, this.backBtn.y + 15);
+        fill(186,18,0);
+        if(mouseX > this.forwBtn.x && mouseX < this.forwBtn.x + 30 && mouseY > this.forwBtn.y && mouseY < this.forwBtn.y + 30){
+            //mouse is in forward btn area
+            cursor(HAND);
+            fill(255, 252, 252);
+        }
+        triangle(this.forwBtn.x, this.forwBtn.y, this.forwBtn.x, this.forwBtn.y + 30, this.forwBtn.x + 30, this.forwBtn.y + 15);
+        
+        /** DISPLAY CREATE PLAYER AND RESET ARRAY BUTTON **/
+        fill(199, 196, 105);
+        if(mouseX > this.specialButtonsPos.y && mouseX < 200  && mouseY > this.specialButtonsPos.z && mouseY < this.specialButtonsPos.z+39){
+            //mouse is in forward btn area
+            cursor(HAND);
+            fill(94, 69, 94);
+        }
+        rect(this.specialButtonsPos.y, this.specialButtonsPos.z, 198/2-1, 39,4);
+        fill(116, 212, 227);
+        if(mouseX > this.specialButtonsPos.x && mouseX < 200/2  && mouseY > this.specialButtonsPos.z && mouseY < this.specialButtonsPos.z+39){
+            //mouse is in forward btn area
+            cursor(HAND);
+            fill(173, 66, 173);
+        }
+        
+        rect(1, this.specialButtonsPos.z, 198/2, 39,4);
+        fill(189, 4, 4);
+        textAlign(CENTER, TOP);
+        textSize(18);
+        text("Delete",198*3/4, 40*this.numberDisplayed+10);
+        fill(30, 0, 255);
+        text("New",198/4, 40*this.numberDisplayed+10);
+
+    };
+    
+    /** DISPLAY OUR WONDERFUL NAMES **/
+    scroller.prototype.names = function(){
+        for(var i = 0; i < this.numberDisplayed; i ++){
+            //calculate index start based on page
+            var ind = ((this.page-1) * this.numberDisplayed) + i;
+            if(ind < this.arr.length){ //no blank boxes
+                //cool little gradient color
+                fill(207, 230 + 3 * i, 247, 100);
+                if(mouseX > 0 && mouseX < 200 && mouseY > i * 40 + 1 && mouseY < i * 40+40){
+                    cursor(HAND); 
+                    fill(227, 154, 227);
+                }
+                
+                rect(1, i * 40+1, 198, 39);
+                textAlign(CENTER, CENTER);
+                fill(0, 0, 0);
+                text(this.arr[ind].name, 100, i * 40 + 20);
+                
+            }
+        }
+    };
+    
+    /** CHECK IF NAME IS CLICKED **/
+    scroller.prototype.nameClick = function(){
+        for(var i = 0; i < this.numberDisplayed; i ++){
+            //calculate index start based on page
+            var ind = ((this.page-1) * this.numberDisplayed) + i;
+            if(ind < this.arr.length){ //no blank boxes
+                if(mouseX > 0 && mouseX < 200 && mouseY > i * 40 + 1 && mouseY < i * 40 + 40){
+                    this.selectedIndex = ind;
+                    //typer.calculate(this.arr,this.selectedIndex);
+                    
+                }
+                
+            }
+        }
+        if (mouseX > this.enterNamePos.x && mouseY > this.enterNamePos.y && mouseX < this.enterNamePos.x + 150 && mouseY < this.enterNamePos.y + 30){ //clicking on the name edit box
+            this.currentlyEditing = "name";
+            typer.string = this.arr[this.selectedIndex].name;
+        }
+        else {
+            for (var i = 0; i < this.buttonAmount.length; i ++){
+                this.buttonAmount[i].clicked();
+            }
+            
+            for (var i = 0;i < 5;i++){
+                if (mouseX > this.playerTypeDisplay.x && mouseY > this.playerTypeDisplay.y + i*70 && mouseX < this.playerTypeDisplay.x + this.playerTypeDisplay.z[0] && mouseY < this.playerTypeDisplay.y + i * 70 + this.playerTypeDisplay.z[1]) {
+                    switch (i){
+                        case 0://player type
+                            this.currentlyEditing = "type";
+                            break;
+                        case 1://player subtype
+                            this.currentlyEditing = "subtype";
+                            break;
+                        case 2://player color
+                            this.currentlyEditing = "color";
+                            break;
+                        case 3://player waitspeed
+                            this.currentlyEditing = "waitSpeed";
+                            typer.string = this.arr[this.selectedIndex].waitSpeed;
+                            break;
+                        case 4://player isDisplayed
+                            this.currentlyEditing = "isDisplayed";
+                            break;
+                    }
+                    break;
+                
+                }else if(this.currentlyEditing === "color"){
+                    //Clicking the pickColor thingy
+                    //Check bounds of the color clicker thing
+                    if (mouseX > pickColor.pos.x && mouseY > pickColor.pos.y  && mouseX < pickColor.pos.x + 117 && mouseY < pickColor.pos.y + 105){
+                        pickColor.select();
+                        this.arr[this.selectedIndex].color = pickColor.value(); 
+                    }
+                    else{
+                        this.currentlyEditing = "";
+                    }
+                
+                }
+                else{//need to check if clicking on color box
+                    this.currentlyEditing = "";
+                    resetArray(this.buttonAmount);
+                }
+            }
+        }
+    };
+    
+    /** LISTEN FOR CLICK EVENTS FOR BTNS AND LOOP PAGES **/
+    scroller.prototype.clicked = function(){
+        
+        if(mouseX > this.backBtn.x && mouseX < this.backBtn.x + 30 && mouseY > this.backBtn.y && mouseY < this.backBtn.y + 30){
+            //mouse is in back btn area
+            if(this.page === 1){
+                this.page = this.totalPages;   
+            }else{
+                this.page --;
+            }
+            while (this.page > this.totalPages){
+                this.page --;
+            }
+        }
+         if(mouseX > this.forwBtn.x && mouseX < this.forwBtn.x + 30 && mouseY > this.forwBtn.y && mouseY < this.forwBtn.y + 30){
+            //mouse is in forward btn area
+            if(this.page === this.totalPages){
+                this.page = 1;   
+            }else{
+                this.page ++;   
+            }
+            while (this.page > this.totalPages){
+                this.page --;
+            }
+        }
+        
+        if(mouseX > this.specialButtonsPos.x && mouseX < 200/2  && mouseY > this.specialButtonsPos.z && mouseY < this.specialButtonsPos.z+39){//clicking the New Button on the editor screen
+           new makePlayer("New Player",Type.player,Type.none,color(255,0,0),10,true);
+        }
+        else if(mouseX > this.specialButtonsPos.y && mouseX < 200  && mouseY > this.specialButtonsPos.z && mouseY < this.specialButtonsPos.z+39){
+            this.arr.splice(this.selectedIndex,1);
+            if (this.selectedIndex > 0){ //when deleting anyone other than the first in the list
+                this.selectedIndex--;
+            }
+            else { //when removing the first in the list
+                if (playersList.length<1){
+                    new makePlayer("New Player",Type.player,Type.none,color(255,random(0,255),0),10,true);
+                }
+            }
+        }
+    };
+};
+
+/** CREATES BUTTON OBJECTS **/
+var makeMenuButton = function(x,y,w,h,txtSiz,txt,destination){
+    this.pos = new PVector(x,y);
+    this.size = new PVector(w,h);
+    this.txtSiz = txtSiz;
+    this.txt = txt;
+    this.destination = destination;
+    
+    makeMenuButton.prototype.display = function(){
+        stroke(0, 255, 230);
+        strokeWeight(3);
+        noFill();
+        if(mouseX > this.pos.x - this.size.x/2 && mouseX < this.pos.x + this.size.x/2 && mouseY > this.pos.y - this.size.y/2 && mouseY < this.pos.y + this.size.y/2){
+            cursor(HAND);
+            fill(Colors.mnubtnsel);
+        }
+        
+        rectMode(CENTER);
+        rect(this.pos.x, this.pos.y, this.size.x, this.size.y, 4);
+        rectMode(CORNER);
+        textAlign(CENTER, CENTER);
+        fill(Colors.mnubtn);
+        
+        if(mouseX > this.pos.x - this.size.x/2 && mouseX < this.pos.x + this.size.x/2 && mouseY > this.pos.y - this.size.y/2 && mouseY < this.pos.y + this.size.y/2){
+            fill(Colors.bg);
+        }
+        textSize(this.txtSiz);
+        text(this.txt, this.pos.x, this.pos.y);
+    };
+    makeMenuButton.prototype.clicked = function(){
+        if(mouseX > this.pos.x - this.size.x/2 && mouseX < this.pos.x + this.size.x/2 && mouseY > this.pos.y - this.size.y/2 && mouseY < this.pos.y + this.size.y/2){
+            currentScreen = this.destination;
+        }  
+        //Special Instructions
+        if (this.destination === Screen.game){
+            initializePlayerPos();
+        }
+        else if (this.destination === Screen.editor){
+            //makeEditorButtons();
+            
+        }
+    };
+};
+
+/** DEFINE GAME BUTTONS **/
+var startBtn = new makeMenuButton(width/2,190,190,40,18, "Start Game", Screen.game);
+var entityBtn = new makeMenuButton(width/2, 240, 190, 40, 18, "Editor", Screen.editor);
+var saveBtn = new makeMenuButton(width/2, 290,190,40,18,"Save Configuration", Screen.save);
+var loadBtn = new makeMenuButton(width/2,340,190,40,18,"Load Configuration", Screen.load);
+var resetBtn = new makeMenuButton(250,70,80,50,20,"To Main",Screen.main);
+var editorSelect = new scroller(playersList);
+var initiativeToggle = new makeEditButtons(playersList,2,"initiative",1,205,375);
+var resetBtn2 = new makeMenuButton(530,230,80,50,20, "Main",Screen.main);
+
+/** DRAW/MOVE PLAYERS **/
+var drawPlayers = function(){
+    var pos = new PVector (0,0);
+    var side = 1;
+    for (var i = 0;i < playersPlaying.length;i++){
+        pos.x = makeValue(playersPlaying[i].pos.x); 
+        pos.y = makeValue(playersPlaying[i].pos.y);
+        
+        
+        
+        fill(playersPlaying[i].color);
+        if (playersPlaying[i].type === Type.player){
+            stroke(Colors.players);
+            side = 1;
+        } 
+        else{
+            stroke(Colors.enemies);
+            side = -1;
+        }
+        if (playersPlaying[i].mindControlCounter > 0){
+            side *= -1;
+        }
+        
+        switch (playersPlaying[i].subtype){
+            case Type.none:
+                triangle(pos.x,pos.y, pos.x - 6 , pos.y - 15 *side, pos.x + 7, pos.y - 15 * side);
+                if (trianglePoint(pos.x,pos.y, pos.x - 6 , pos.y - 15 *side, pos.x + 7, pos.y - 15 * side,mouseX,mouseY)){
+                    //draw the player's name here
+                    cursor(HAND);
+                    pushMatrix ();
+                    translate(pos.x,pos.y);
+                    //pulledMenu.object = playersPlaying[i];
+                    
+                    rotate(270);
+                    
+                    fill(Colors.gameNames);
+                    textAlign(LEFT,CENTER);
+                    textSize(20);
+                    text(playersPlaying[i].name,20,0);
+                
+                    popMatrix();
+                }
+                break;
+            case Type.minion:
+                triangle(pos.x,pos.y, pos.x - 10 , pos.y - 15 * side, pos.x + 2, pos.y - 12 * side);
+                if (trianglePoint(pos.x,pos.y, pos.x - 10 , pos.y - 15 * side, pos.x + 2, pos.y - 12 * side,mouseX,mouseY)){
+                    //draw the minion's name here
+                    cursor(HAND);
+                    pushMatrix ();
+                    translate(pos.x,pos.y);
+                    
+                    rotate(270);
+                    
+                    fill(Colors.gameNames);
+                    textAlign(LEFT,CENTER);
+                    textSize(20);
+                    text(playersPlaying[i].name,20,0);
+                
+                    popMatrix();
+                }
+                break;
+            case Type.boss:
+                triangle(pos.x,pos.y, pos.x - 11 , pos.y - 25 * side, pos.x + 11, pos.y - 25 * side);
+                if (trianglePoint(pos.x,pos.y, pos.x - 11 , pos.y - 25 * side, pos.x + 11, pos.y - 25 * side,mouseX,mouseY)){
+                    //draw the player's name here
+                    cursor(HAND);
+                    pushMatrix ();
+                    translate(pos.x,pos.y);
+                    
+                    rotate(270);
+                    
+                    fill(Colors.gameNames);
+                    textAlign(LEFT,CENTER);
+                    textSize(20);
+                    text(playersPlaying[i].name,35,0);
+                
+                    popMatrix();
+                }
+                break;
+            default:
+                println("ERROR IN DETERMINING SUBTYPE, drawPlayers");
+                break;
+        }
+    }
+    
+};
+/*
+[object,
+    [spawnIn, spawnNumber],
+    death,
+    knockback,
+    [periodicHitstun, amount, knockback, interval],
+    mindControlTimer,
+    [waitLineSpeedIncrease, timer], 
+    [actLineSpeedIncrease, timer]]
+    ]*/
+/** DETERMINES WHAT PLAYER SHOULD DO **/
+var movePlayers = function(){ 
+    var nextPlayerPos = new PVector(0,0);
+    if (!paused){
+        for (var i = 0; i < playersPlaying.length;i++){
+            //Remove Player
+            if (playersPlaying[i].isDisplayed === false){
+                playersPlaying.splice(i,1);//remove player
+                break;
+            }
+            //Do Counters:
+            
+            if (playersPlaying[i].periodicHitStun[0] > 0)
+            {//if there is periodic hitstun
+                //Increase current timer
+                playersPlaying[i].periodicHitStun[4] ++;
+                playersPlaying[i].periodicHitStun[0] --;//Decrease timer for how long the periodic lasts
+                if (playersPlaying[i].periodicHitStun[4] >= playersPlaying[i].periodicHitStun[3]){
+                    //If it is time to trigger hitstun and knockback
+                    playersPlaying[i].hitStunCounter += playersPlaying[i].periodicHitStun[1]; //Give the hitstun
+                    playersPlaying[i].periodicHitStun[4] = 0; //Reset current timer
+                    playersPlaying[i].knockback += playersPlaying[i].periodicHitStun[2]; //Give knockback
+                }
+            }
+            if (playersPlaying[i].waitSpeedModifier[1] > 0){
+                //If there is a waitSpeedModifier
+                playersPlaying[i].waitSpeedModifier[1]--;
+                playersPlaying[i].waitSpeed = waitSpeedCalculate(playersPlaying[i].baseWaitSpeed + playersPlaying[i].waitSpeedModifier[0]);//Add base wait Speed to modifier for wait speed;
+            }
+            else { 
+                //Return waitSpeed to normal
+                playersPlaying[i].waitSpeed = waitSpeedCalculate(playersPlaying[i].baseWaitSpeed);
+            }
+            
+            if (playersPlaying[i].actSpeedModifier[1] > 0){
+                //If there is an actSpeedModifier
+                playersPlaying[i].actSpeedModifier[1]--;
+                playersPlaying[i].actSpeed = actSpeedCalculate(playersPlaying[i].baseActSpeed + playersPlaying[i].actSpeedModifier[0]);//Add base act Speed to modifier for act speed;
+                if(playersPlaying[i].actSpeedModifier[1] === 0){
+                    println("Finished " + playersPlaying[i].name + " +" + playersPlaying[i].actSpeedModifier[0] + " ACT Speed Modifier");
+                }
+            }
+            else { 
+                //Return actSpeed to normal
+                playersPlaying[i].actSpeed = actSpeedCalculate(playersPlaying[i].baseActSpeed);
+            }
+            for (var j = 0;j < playersPlaying[i].randomTimer.length;j++){
+                if (playersPlaying[i].randomTimer[j][0] > 0){
+                    playersPlaying[i].randomTimer[j][0]--;
+                    if (playersPlaying[i].randomTimer[j][0]===0){
+                        if(playersPlaying[i].randomTimer[j][2] === 0){//If no more iterations of DoT/Timer to inflict
+                            println("Finished " + playersPlaying[i].name + " " + playersPlaying[i].randomTimer[j][1]);
+                            playersPlaying[i].randomTimer.splice(j,1);//Remove timer from array to prevent sick memory leaks
+                        }
+                        else{//Reload timer
+                            playersPlaying[i].randomTimer[j][0] = playersPlaying[i].randomTimer[j][3];
+                            playersPlaying[i].randomTimer[j][2]--;//Decrement DoT counter
+                            println(playersPlaying[i].name + " took an instance of " + playersPlaying[i].randomTimer[j][1]);
+                        }
+                        
+                    }
+                }
+            }
+            if (playersPlaying[i].hitStunCounter <= 0){
+                if (playersPlaying[i].stage === Stage.wait){
+                    nextPlayerPos.x = playersPlaying[i].waitSpeed + playersPlaying[i].pos.x;
+                    nextPlayerPos.y = groundLevel;
+                    if (playersPlaying[i].mindControlCounter > 0){//Mind Control Counter is done separately due to special properties
+                        playersPlaying[i].mindControlCounter--;
+                    }
+                }
+                else if (playersPlaying[i].stage === Stage.act){
+                    nextPlayerPos.x = playersPlaying[i].actSpeed + playersPlaying[i].pos.x;
+                    nextPlayerPos.y = groundLevel + lineDistanceApart; 
+                }
+                else{
+                    nextPlayerPos.y = playersPlaying[i].pos.y;
+                    nextPlayerPos.x = playersPlaying[i].pos.x;
+                }
+                
+                //check to see if it will go to the act start
+                if ((ceil(nextPlayerPos.x) > width * 0.7) && (playersPlaying[i].stage === Stage.wait)){
+                    
+                    if (ceil(nextPlayerPos.x) > width * 0.7){
+                        nextPlayerPos.x = width * 0.7;
+                    }
+                    playersPlaying[i].stage = Stage.endWait;
+                    
+                }
+                else if ((ceil(nextPlayerPos.x) > (width-lineSpace)) && (playersPlaying[i].stage === Stage.act)){
+                    if (ceil(nextPlayerPos.x) > width - lineSpace){
+                        nextPlayerPos.x = width - lineSpace;
+                    }
+                    playersPlaying[i].stage = Stage.endAct;
+                   
+                }
+                
+                playersPlaying[i].pos.x = nextPlayerPos.x;
+                playersPlaying[i].pos.y = nextPlayerPos.y;
+            }
+            else {
+                playersPlaying[i].hitStunCounter --;
+            }/*
+            if (playersPlaying[i].mindControlCounter > 0){
+                if (playersPlaying[i].stage === Stage.wait){
+                    playersPlaying[i].mindControlCounter--;
+                }
+                else if (playersPlaying[i].mindControlCounter !== 1){
+                    playersPlaying[i].mindControlCounter--;
+                }
+            }*/
+        }
+    }
+};
+
+/** TEST PLAYERS **/
+
+/*
+new makePlayer("tiffany",Type.player,Type.none,color(255,0,0),1,true);
+new makePlayer("tiffany2",Type.player,Type.minion,color(237, 178, 178),5,true);
+new makePlayer("tiffany3",Type.player,Type.boss,color(0, 153, 255),4,true);
+new makePlayer("tiffany4",Type.enemy,Type.minion,color(255, 0, 225),2.5,true);
+new makePlayer("tiffany5",Type.enemy,Type.none,color(196, 255, 0),0.5,true);
+new makePlayer("tiffany6",Type.enemy,Type.none,color(196, 255, 0),0.5,true);
+new makePlayer("tiffany7",Type.enemy,Type.none,color(196, 255, 0),0.5,true);
+new makePlayer("tiffany8",Type.enemy,Type.none,color(196, 255, 0),0.5,true);
+*/
+for (var i = 0; i < 5; i++){
+    new makePlayer("Tiffany" + i, Type.player,Type.none,color(133, 90, 90),random(1,100),true);
+}
+
+/** PULL-UP MENU FOR SELECTIONS **/
+//Pull up menu to select things from a list of things
+var pullMenu = function(arr, index, x, y, object){
+    this.array = arr;
+    this.index = index;
+    this.listSize = 6;
+    this.boxNumber = 6;
+    this.pos = new PVector(x,y);
+    this.size = new PVector(200,25);
+    this.checkSize = new PVector(this.size.y,this.size.y);
+    this.object = undefined;
+    this.page = 0;
+    this.totalPages = ceil(this.array.length/this.listSize);
+    this.selected = [];//list of everything checked or what have you.  Goes in [identifier, operation] Options are: "kill"
+    
+    /* format is: [
+    [object,[spawnIn,spawnNumber], death, knockback, [periodicHitstun, amount, knockback, interval], mindControlTimer, [waitLineSpeedIncrease, timer], [actLineSpeedIncrease, timer]],
+    
+    [object,
+    [spawnIn, spawnNumber],
+    death,
+    knockback,
+    [periodicHitstun, amount, knockback, interval],
+    mindControlTimer,
+    [waitLineSpeedIncrease, timer], 
+    [actLineSpeedIncrease, timer]]
+    ]
+    
+    */
+    
+    pullMenu.prototype.display = function(){
+        fill(255, 0, 0);
+        text(framesCounter, width*2/3,height/3);
+        if(paused === false){
+            framesCounter++;
+        }
+        fill(255, 0, 0);
+        for (var i = 0; i < this.listSize; i++){
+            if (mouseX > this.pos.x && mouseX < this.pos.x + this.size.x && mouseY > this.pos.y + i * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * i){
+            fill(Colors.listSel);
+            cursor(HAND);
+        }
+        else{
+            fill(Colors.list);
+        }
+            rect(this.pos.x,this.pos.y + i * (this.size.y),this.size.x,this.size.y);
+            for (var k = 1; k <= this.boxNumber; k ++){
+                if (mouseX > this.pos.x - this.checkSize.x * (k) && mouseX < this.pos.x - this.checkSize.x * (k+this.boxNumber+1) + this.size.x && mouseY > this.pos.y + i * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * i){
+                        fill(Colors.listSel);
+                        cursor(HAND);
+                    }
+                else{
+                        fill(Colors.list);
+                    }
+                    rect(this.pos.x - this.checkSize.x * k,this.pos.y + i * this.size.y,this.checkSize.x,this.checkSize.y);
+                    textAlign(CENTER,CENTER);
+                    fill(this.array === playersPlaying ? Colors.igePlay : Colors.igeList);
+                    switch (k){//Write different Letters for representing different horrors
+                        case 1://Set DoT Standard 100
+                            text("C",this.pos.x-this.checkSize.x*k+this.checkSize.x/2,this.pos.y+i*this.size.y+this.checkSize.y/2);
+                            
+                        break;
+                        case 2://Set DoT Standard 70
+                            text("B",this.pos.x-this.checkSize.x*k+this.checkSize.x/2,this.pos.y+i*this.size.y+this.checkSize.y/2);
+                            break;
+                        case 3://Set DoT Standard 30
+                            text("A",this.pos.x-this.checkSize.x*k+this.checkSize.x/2,this.pos.y+i*this.size.y+this.checkSize.y/2);
+                            break;
+                        case 4: //Kill or unkill yourself
+                        {
+                            text(this.array === playersPlaying ? "D" : "S",this.pos.x - this.checkSize.x * k + this.checkSize.x/2, this.pos.y + i * this.size.y + this.checkSize.y/2);
+                        }
+                        break;
+                        case 5://Set Mind Control to 100
+                            text("M",this.pos.x-this.checkSize.x*k+this.checkSize.x/2,this.pos.y+i*this.size.y+this.checkSize.y/2);
+                            break;
+                        case 6://Set Hitstun to 10
+                            text("H",this.pos.x-this.checkSize.x*k+this.checkSize.x/2,this.pos.y+i*this.size.y+this.checkSize.y/2);
+                            break;
+                    }
+            }
+            textAlign(LEFT,TOP);
+            fill(this.array === playersPlaying ? Colors.igePlay : Colors.igeList);
+            if (this.array[i + this.page * this.listSize] !== undefined){
+                text(this.array[i + this.page * this.listSize].name,this.pos.x + 2,this.pos.y + i * (this.size.y));
+            }
+            
+        }
+        
+        //Page Buttons Display
+        strokeWeight(1);
+        if (mouseX > this.pos.x && mouseX < this.pos.x + this.size.x/3 && mouseY > this.pos.y + this.listSize * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * this.listSize){
+            fill(Colors.listSel);
+            stroke(Colors.mnubtnsel);
+            cursor(HAND);
+        }
+        else { 
+            fill(Colors.list); 
+            stroke(Colors.mnubtn);
+        }
+        rect(this.pos.x,this.pos.y + this.listSize * (this.size.y),this.size.x/3,this.size.y);
+        fill(Colors.arrow);
+        noStroke();
+        triangle(this.pos.x + 4, this.pos.y + this.listSize * this.size.y + this.size.y/2,this.pos.x + this.size.x/3-4,this.pos.y + this.listSize * this.size.y + 2, this.pos.x + this.size.x/3- 4,this.pos.y + this.listSize * this.size.y + this.size.y - 2);
+        
+        if (mouseX > this.pos.x + this.size.x*2/3 && mouseX < this.pos.x + this.size.x && mouseY > this.pos.y + this.listSize * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * this.listSize){
+            fill(Colors.listSel);
+            stroke(Colors.mnubtnsel);
+            cursor(HAND);
+        }
+        else { 
+            fill(Colors.list); 
+            stroke(Colors.mnubtn);
+        }
+        rect(this.pos.x + this.size.x*2/3 - 1,this.pos.y + this.listSize * (this.size.y),this.size.x/3,this.size.y);
+        fill(Colors.arrow);
+        noStroke();
+        triangle(this.pos.x + this.size.x - 4, this.pos.y + this.listSize * this.size.y + this.size.y/2,this.pos.x + this.size.x/3 * 2 + 4,this.pos.y + this.listSize * this.size.y + 2, this.pos.x + this.size.x*2/3 + 4,this.pos.y + this.listSize * this.size.y + this.size.y - 2);
+        //Change array list button
+        var temp = this.array === playersPlaying ? "Playing" : " Index";
+        
+        if (mouseX > this.pos.x + this.size.x/3 && mouseX < this.pos.x + this.size.x/3*2 && mouseY > this.pos.y + this.listSize * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * this.listSize){
+            fill(Colors.listSel);
+            stroke(Colors.mnubtnsel);
+            cursor(HAND);
+        }
+        else { 
+            fill(Colors.list); 
+            stroke(Colors.mnubtn);
+        }
+        rect(this.pos.x + this.size.x/3,this.pos.y + this.listSize * this.size.y, this.size.x/3,this.size.y);
+        fill(255, 0, 0);
+        text(temp,this.pos.x + this.size.x/3,this.pos.y + this.listSize * this.size.y);
+    };
+    
+    
+    pullMenu.prototype.clicked = function(){
+        //click name or arrow on check boxes
+        for (var i = 0; i < this.listSize; i++){
+            if (mouseX > this.pos.x && mouseX < this.pos.x + this.size.x && mouseY > this.pos.y + i * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * i){
+                //Clicked a name
+                if (this.array[i + this.page * this.listSize] !== undefined){
+                    this.object = this.array[i + this.page * this.listSize];
+                }
+                else { //clicked a box with nothing there
+                    println("but nobody came..."); 
+                }
+            }
+            for (var k = 1; k <= this.boxNumber; k ++){
+                if (mouseX > this.pos.x - this.checkSize.x * (k) && mouseX < this.pos.x - this.checkSize.x * (k+this.boxNumber+1) + this.size.x && mouseY > this.pos.y + i * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * i){
+                    switch (k){//What box you clicked
+                        case 1://Add DoT Length 100 3 times
+                            
+                            if(this.array[i+this.page*this.listSize] !== undefined){
+                                if (this.array[i + this.page*this.listSize].isDisplayed === true)
+                            {
+                                
+                                this.selected.push([this.array[i+this.page*this.listSize],"dot100"]);
+                            }
+                            }
+                            break;
+                        case 2://Add DoT Length 70 3 times
+                            
+                            if(this.array[i+this.page*this.listSize] !== undefined){
+                                if (this.array[i + this.page*this.listSize].isDisplayed === true)
+                            {
+                                
+                                this.selected.push([this.array[i+this.page*this.listSize],"dot70"]);
+                            }
+                            }
+                            break;
+                        case 3://Add DoT Length 30 3 times
+                            
+                            if(this.array[i+this.page*this.listSize] !== undefined){
+                                if (this.array[i + this.page*this.listSize].isDisplayed === true)
+                            {
+                                
+                                this.selected.push([this.array[i+this.page*this.listSize],"dot30"]);
+                            }
+                            }
+                            break;
+                        case 4://what box you clicked
+                        if(this.array[i + this.page * this.listSize] !== undefined)
+                        {
+                            if (this.array[i + this.page*this.listSize].isDisplayed === true)
+                            {
+                                this.selected.push([this.array[i + this.page * this.listSize],"kill"]);
+                            }
+                            else{
+                                this.selected.push([this.array[i + this.page * this.listSize],"unkill"]);
+                            }
+                        }
+                        else{//no valid selection
+                            println("No valid selection!");
+                        }
+                        break;
+                        case 5://Add Mind Control 100 Time
+                            
+                        if(this.array[i+this.page*this.listSize] !== undefined){
+                                if (this.array[i + this.page*this.listSize].isDisplayed === true)
+                            {
+                                
+                                this.selected.push([this.array[i+this.page*this.listSize],"mind"]);
+                            }
+                        }
+                        break;
+                        case 6://Give 10 Hitstun
+                            if(this.array[i + this.page * this.listSize] !== undefined)
+                        {
+                            
+                            this.selected.push([this.array[i + this.page * this.listSize],"hitstun"]);
+                            
+                        }
+                            break;
+                    
+                    }
+                }
+            }
+        }
+        
+        //Click left and right pagers
+        //left page
+        if (mouseX > this.pos.x && mouseX < this.pos.x + this.size.x/3 && mouseY > this.pos.y + this.listSize * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * this.listSize){
+            this.totalPages = floor(this.array.length/this.listSize);
+            this.page--;
+            if (this.page < 0){
+                this.page = this.totalPages;
+            }
+            
+        }//right page
+        else if (mouseX > this.pos.x + this.size.x*2/3 && mouseX < this.pos.x + this.size.x && mouseY > this.pos.y + this.listSize * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * this.listSize){
+            this.totalPages = floor(this.array.length/this.listSize);
+            this.page++;
+            if (this.page > this.totalPages){
+                this.page = 0;
+            }
+        }
+        else if (mouseX > this.pos.x + this.size.x/3 && mouseX < this.pos.x + this.size.x/3*2 && mouseY > this.pos.y + this.listSize * this.size.y && mouseY < this.pos.y + this.size.y + this.size.y * this.listSize){//Click the Index/Playing button to switch the active list you're looking at
+            if (this.array === playersPlaying){
+                this.array = playersList;
+            }
+            else
+            {
+                this.array = playersPlaying;
+            }
+        }
+    };
+};
+var pulledMenu = new pullMenu(playersPlaying, 0, 300, 300, null);
+var actMenu = new pullMenu(playersPlaying, 0,300,300,null);
+
+/** CHOOSE ACTSPEED BUTTONS **/
+var chooseActSpeed = function(array,index){
+    var buttonNumber = 5; //S, N, F, I, write-in
+    var pos = new PVector(groundLevel/buttonNumber,height/4*3);
+    var size = new PVector(60,60,80);
+    var returnPosPos = new PVector(pos.x,pos.y+75);
+    var returnPosSize = new PVector(size.x*1.5,size.y/2,size.z*1.5-10);
+    this.selectedReturnPos = 0;
+    var actSpeeds = new PVector([
+        0.3* lineUnitAct, lineUnitAct,1.5* lineUnitAct,lineLengthAct* lineUnitAct, "other"
+        ],["S","N","F","I","C"]);
+    this.index = 0;
+    this.array = array;
+    this.isTyping = 0;
+        
+    chooseActSpeed.prototype.display = function(){
+        stroke(227, 214, 214,100);//create actSpeed buttons
+        for (var i = 0; i < buttonNumber;i++){
+            if (mouseX > pos.x + i*size.z && mouseX < pos.x + i * size.z + size.x && mouseY > pos.y && mouseY < pos.y+size.y){
+                fill(Colors.waitLine);
+            }
+            else{
+                fill(Colors.actLine);
+            }
+            rect(pos.x + i* size.z,pos.y,60,60,2); 
+            fill(184, 164, 164);
+            rect(40,350,this.array[this.index].name.length * 17 ,40,2);
+            fill(0, 0, 0);
+            textAlign(LEFT,CENTER);
+            textSize(30);
+            text(this.array[this.index].name,45,370);
+            textSize(43);
+            textAlign(CENTER,CENTER);
+            
+            /** Type in Custom **/
+            
+            if (this.isTyping !== 0 && i === (buttonNumber-1)){
+                //clicked on "C" and now needs to type in CUSTOM Value
+                typer.index = 0;
+                if (typer.display(pos.x + i * size.z + size.x/2,pos.y+size.y/2,"actSpeed") === 2){
+                    this.array[this.index].stage = Stage.act;
+                    waitingToAct.pop();
+                    paused = false;
+                    this.selectedReturnPos = 0;
+                    this.isTyping = 0;
+                    typer.string = 0;
+                }
+            }
+            else{
+                text(actSpeeds.y[i],pos.x + i * size.z + size.x/2,pos.y+size.y/2);
+            }
+        }
+        //Create returnPos buttons for where on the waitLine playersPlaying will return to
+        for (var i = 0; i <= returnPosCount; i++){
+            if (mouseX > returnPosPos.x + i*returnPosSize.z && mouseX < returnPosPos.x + i * returnPosSize.z + returnPosSize.x && mouseY > returnPosPos.y && mouseY < returnPosPos.y+returnPosSize.y){
+                if (this.selectedReturnPos === i){
+                    fill(Colors.arrow);
+                }
+                else{
+                    fill(Colors.waitLine);
+                }
+            }
+            else if (this.selectedReturnPos === i){
+                fill(Colors.arrow);
+            }
+            else {
+                fill(Colors.returnPos[i]);
+            }
+            rect(returnPosPos.x + returnPosSize.z*i,returnPosPos.y,returnPosSize.x,returnPosSize.y,2);
+        }
+        
+    };
+    chooseActSpeed.prototype.clicked = function(){ 
+        this.isTyping = 0;
+        for (var i = 0; i <= returnPosCount; i++){//choose return pos button
+            if (mouseX > returnPosPos.x + i*returnPosSize.z && mouseX < returnPosPos.x + i * returnPosSize.z + returnPosSize.x && mouseY > returnPosPos.y && mouseY < returnPosPos.y+returnPosSize.y){
+                this.selectedReturnPos = i;
+                this.array[this.index].returnPos = i * returnPosSpacing + lineSpace;
+            }
+        }
+        for (var i = 0; i < buttonNumber;i++){//clicked on actSpeed button
+            if (mouseX > pos.x + i*size.z && mouseX < pos.x + i * size.z + size.x && mouseY > pos.y && mouseY < pos.y+size.y){
+                if (actSpeeds.y[i] === "C"){
+                    typer.string = "1";
+                    if (this.isTyping !== 1){
+                        this.isTyping = 1;
+                        
+                    }
+                }
+                else{
+                    this.array[this.index].baseActSpeed = actSpeeds.x[i]; 
+                    this.array[this.index].stage = Stage.act; 
+                    waitingToAct.pop();
+                    paused = false;
+                    this.selectedReturnPos = 0;
+
+                }
+                break;
+                
+            }
+        }
+    };
+};
+var chooseAct = new chooseActSpeed(waitingToAct,0);
+ 
+/** DICTATE POST ACT **/
+var chooseActAction = function(array, index, recursion, special, object){
+    //Kill yourself, Kill other entity, Spawn other entity, spawn groups of entities, kill multiple, give or take hitstun
+    this.array = array;
+    this.index = index;
+    this.special = special;
+    this.currentButtons = [];
+    this.recursion = recursion;
+    this.cell = [];
+    this.object = object;
+    
+    switch(recursion){
+        case 0: //Pull up menu and select all entities, then kill selected
+            this.cell.push();
+            break;
+        case 1: //Pull up menu and select all entities, then spawn selected
+            this.cell.push();
+            break;
+        case 2: //Pull up menu and select all entities, then give hitstun to selected
+            this.cell.push();
+            break;
+    }
+    
+    chooseActAction.prototype.display = function(){
+        
+    };
+    
+};
+ 
+/** CHOOSES ACTSPEED/ACTION AND RESETS STAGES **/
+var checkAction = function(){
+    for (var i = 0; i < playersPlaying.length;i++){
+        if (playersPlaying[i].stage === Stage.endWait){
+            paused = true;
+            if (waitingToAct.length === 0){
+                waitingToAct.push(playersPlaying[i]);
+            }
+
+            if (waitingToAct.length === 1){
+                chooseAct.display();
+                break; //we don't want multiple instances running
+            }
+        }
+        else if (playersPlaying[i].stage === Stage.endAct){
+            paused = true;
+            println(playersPlaying[i].name + " : " + playersPlaying[i].cloneNumber + " - Action Completed");
+            chooseActAction();
+            //pulledMenu.pos = new PVector(300,50);
+            //pulledMenu.display();
+            
+            //RETURN TO EDIT
+            playersPlaying[i].stage = Stage.wait;
+            playersPlaying[i].pos.x = playersPlaying[i].returnPos;
+            playersPlaying[i].returnPos = lineSpace;
+            playersPlaying[i].pos.y = groundLevel;
+            playersPlaying[i].turnCounter++;
+        }
+    }
+    
+};
+
+/** IN-GAME EDIT MENU **/
+var gameEditMenu = function() {
+    /*
+    Look through all playersPlaying array or playersList array and put mind control and timers, kill players, add players, change position manually of players, give hitStun, change waitSpeed or actSpeed manually.  Works while paused, obviously.  Can change framerate of game also.
+    
+    [object,
+    [spawnIn, spawnNumber],
+    death,
+    knockback,
+    [periodicHitstun, amount, knockback, interval],
+    mindControlTimer,
+    [waitLineSpeedIncrease, timer], 
+    [actLineSpeedIncrease, timer]]
+    ]
+    
+    *///RETURN TO EDIT
+    var numberDisplayed = 0;
+    var distanceApart = 25;
+    var temp;
+    var object;
+    var displayType;
+    var pos = new PVector(width*4/6,height/25);
+    var size = new PVector(width/10*3,height/4);
+    stroke(201, 169, 169);
+    fill(217, 174, 174);
+    rect(pos.x,pos.y,size.x,size.y,1);
+    pulledMenu.pos = new PVector(width/3.5,height/25);
+    //pulledMenu.array = playersPlaying;
+    pulledMenu.display();
+    if(pulledMenu.object !== undefined){
+        object = pulledMenu.object;
+        for (var i = 0; i < playersPlaying.length;i++){
+            if (pulledMenu.object === playersPlaying[i]){
+                //verify that the object is in the array
+                displayType = "playersPlaying";
+                break;
+            }
+            else{
+                displayType = "playersList";
+            }
+        }
+    }
+    numberDisplayed=1;
+    switch(displayType){
+        case "playersPlaying":
+            { //Display data for player playing
+            fill(Colors.igePlay);
+            text(object.name,pos.x,pos.y);
+            temp = object.waitSpeedModifier[1] > 0 ? object.waitSpeedModifier[0] : 0; //If there is an active waitSpeedModifier or not
+            text("Wait Speed: " + (object.baseWaitSpeed + temp),pos.x,pos.y+distanceApart * numberDisplayed);
+            numberDisplayed++;
+            if (object.cloneNumber > 0){
+                text("Clone: " + object.cloneNumber,pos.x,pos.y + numberDisplayed * distanceApart);
+                numberDisplayed++;
+            }
+            if(object.mindControlCounter > 0){
+                text("Mind Control: " + object.mindControlCounter,pos.x,pos.y + numberDisplayed * distanceApart);
+                numberDisplayed++;
+            }
+            if(object.waitSpeedModifier[1] > 0){
+                text("WSpeed + " + object.waitSpeedModifier[0] + " for " + object.waitSpeedModifier[1],pos.x,pos.y+numberDisplayed * distanceApart);
+                numberDisplayed++;
+            }
+            if(object.actSpeedModifier[1] > 0){
+                text("ASpeed + " + object.actSpeedModifier[0] + " for " + object.actSpeedModifier[1],pos.x,pos.y+numberDisplayed * distanceApart);
+                numberDisplayed++;
+            }
+            if(object.randomTimer.length > 0){
+                for(var j = 0;j<object.randomTimer.length;j++){
+                    text(object.randomTimer[j][1] + ": " + object.randomTimer[j][0],pos.x,pos.y+numberDisplayed * distanceApart);
+                    numberDisplayed++;
+                }
+            }
+            break;
+        }
+            
+        case "playersList":
+        {   //Display data for player in the editor
+            fill(Colors.igeList);
+            text(object.name,pos.x,pos.y);
+            text("Wait Speed: " + object.waitSpeed,pos.x,pos.y+distanceApart * numberDisplayed);
+            break;
+        }
+    }
+    //Look through what's selected and execute it
+    for(var i = 0; i < pulledMenu.selected.length;i++){
+        //Check what array this selected thing is in
+        if (pulledMenu.array === playersPlaying){
+            switch(pulledMenu.selected[i][1])
+            {
+                case "kill":
+                    pulledMenu.selected[i][0].isDisplayed = false;
+                    println("Killed " + pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                case "unkill":
+                    pulledMenu.selected[i][0].isDisplayed = true;
+                    println("Un-Killed " + pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                case "dot100":
+                    
+                    pulledMenu.selected[i][0].randomTimer.push([30,"dot100",3,100]); 
+                    println("Set dot100 Timer on "+pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                    
+                case "dot70":
+                    
+                    pulledMenu.selected[i][0].randomTimer.push([30,"dot70",3,70]); 
+                    println("Set dot70 Timer on "+pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                    
+                case "dot30":
+                    
+                    pulledMenu.selected[i][0].randomTimer.push([30,"dot30",3,30]); 
+                    println("Set dot30 Timer on "+pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                case "mind":
+                    pulledMenu.selected[i][0].mindControlCounter = 100;
+                    println("Set Mind Control 100 Time on "+pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                case "hitstun":
+                    pulledMenu.selected[i][0].hitStunCounter += 10;
+                    println("Gave 10 hitstun to "+pulledMenu.selected[i][0].name);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+            }
+        }
+        else {//In the playersList array
+            switch(pulledMenu.selected[i][1])
+            {
+                case "kill":
+                case "unkill":
+                    var temp = pulledMenu.selected[i][0].isDisplayed;
+                    pulledMenu.selected[i][0].isDisplayed = true;
+                    playersPlaying.push(new spawnPlayers(pulledMenu.selected[i][0],1));
+                    pulledMenu.selected[i][0].isDisplayed = temp;
+                    playersPlaying[playersPlaying.length-1].pos.x = lineSpace;
+                    temp = 0;
+                    for (var p = 0; p < playersPlaying.length-1; p++){
+                        if (playersPlaying[p].name === playersPlaying[playersPlaying.length-1].name){
+                            if(playersPlaying[p].cloneNumber > temp){
+                                temp = playersPlaying[p].cloneNumber;
+                            }
+                            Math.max(temp++,makeValue(playersPlaying[p].cloneNumber));
+                        }
+                        
+                    }
+                    playersPlaying[playersPlaying.length-1].cloneNumber = temp;
+                    
+                    println("Spawned " + pulledMenu.selected[i][0].name + " " + playersPlaying[playersPlaying.length-1].cloneNumber);
+                    pulledMenu.selected.splice(i,1);
+                    break;
+                default://Need to splice out to prevent crashing
+                    println("???");
+                    
+                    pulledMenu.selected.splice(i,1);
+                break;
+            }
+        }
+        
+    }
+    
+};
+
+/** FIND WHICH SCREEN TO ACTIVATE **/
+var calculateScreen = function(){
+    switch (currentScreen){
+        case Screen.game:
+            checkAction();
+            movePlayers();
+            resetBtn2.display();
+            land();
+            drawPlayers();
+            gameEditMenu();
+            break;
+        case Screen.editor:
+            editorSelect.display();
+            editorSelect.names();
+            resetArray(playersPlaying);
+            resetBtn.display();
+            editorSelect.displayInfo();
+            break;
+        case Screen.load:
+            if (loadArray.length > 0){
+                resetArray(playersPlaying);
+                resetBtn.display();
+                resetArray(playersList);
+                loadPlayers();
+                println(loadArray);
+                println("successfully loaded");
+            }
+            else{
+                println("Invalid load array!\nPlease check your data and try again!");
+            }
+            currentScreen = Screen.main;
+            break;
+        case Screen.save:
+            currentScreen = Screen.main;
+            savePlayers();
+            break;
+        case Screen.main:
+            resetArray(playersPlaying);
+            textAlign(CENTER, CENTER);
+            fill(255, 255, 255);
+            textSize(40);
+            text("IP System Redux", width/2, 100);
+            startBtn.display();
+            entityBtn.display();
+            saveBtn.display();
+            loadBtn.display();
+            initiativeToggle.display();
+            resetArray(waitingToAct);
+            break;
+        default:
+            resetArray(playersPlaying);
+            resetBtn.display();
+            println("error in calculateScreen, no room found");
+            break;
+    }
+    
+};
+
+/** MOUSE LISTENER **/
+var mouseClicked = function(){
+    switch(currentScreen){
+        case Screen.main:
+            startBtn.clicked();
+            entityBtn.clicked();
+            saveBtn.clicked();
+            loadBtn.clicked();
+            initiativeToggle.clicked();
+            pulledMenu.object = undefined;
+            break;
+        case Screen.editor:
+            editorSelect.clicked();
+            editorSelect.nameClick();
+            resetBtn.clicked();
+            break;
+        case Screen.load:
+            resetBtn.clicked();
+            break;
+        case Screen.game:
+            resetBtn2.clicked();
+            pulledMenu.clicked();
+            if (waitingToAct.length > 0){
+               chooseAct.clicked();
+            }
+            break;
+        default:
+            resetBtn.clicked();
+            println("error in mouseclicked, no room found");
+            break;
+    }
+    
+};
+/*
+var mouseDragged = function(){
+    switch (currentScreen){
+        case Screen.editor:
+            if (editorSelect.currentlyEditing === "color"){
+                pickColor.moveSlider();
+            }
+            break;
+        
+    }
+};*/
+
+/** ON KEY PRESSES **/
+var keyPressed = function(){
+    if (keyCode === 32){ //SpaceBar
+        paused = !paused; 
+        
+    }
+    //Test Buttons
+    if (keyCode === 75){ //lowercase k
+        //playersList[0].pos.x = lineSpace;
+        //playersPlaying.push(new spawnPlayers(playersList[0]));
+        playersPlaying[0].waitSpeedModifier[0] = 20;
+        playersPlaying[0].waitSpeedModifier[1] = 100;
+        playersPlaying[0].actSpeedModifier[0] = 20;
+        playersPlaying[0].actSpeedModifier[1] = 100;
+    }
+    if (keyCode === 73) { //letter i
+        //playersPlaying[0].isDisplayed = false;
+        //playersPlaying[0].randomTimer[1] = "Testing";
+        //playersPlaying[0].randomTimer[0] = 5;
+    }
+    if (keyCode === 77){//letter m
+        //playersPlaying[0].mindControlCounter = 50;
+        //playersPlaying[playersPlaying.length-1].isDisplayed = false;
+        //playersPlaying.pop();
+        //pulledMenu.array = playersList;
+        //playersPlaying[0].hitStunCounter = 20;
+        println("yeah");
+    }
+    switch(currentScreen){
+        case Screen.editor:
+            typer.getInput(key,keyCode);
+            break;
+        case Screen.game:
+            if (chooseAct.isTyping === 1){
+                typer.getInput(key,keyCode);
+            }
+            break;
+    }
+};
+
+/** RUN THIS CODE ONLY ONE TIME **/
+//no code here currently
+
+/** DRAW FUNCTION **/
+var draw = function(){
+    // DRAW SCENE
+    drawBG();
+    
+    // UPDATE EVERYTHING
+    calculateScreen();
+};
